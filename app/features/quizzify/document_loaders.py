@@ -367,3 +367,5 @@ file_loader_map = {
     FileType.YOUTUBE_URL: load_docs_youtube_url,
     FileType.IMG: generate_docs_from_img
 }
+
+#code
