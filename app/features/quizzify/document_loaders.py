@@ -13,7 +13,14 @@ import tempfile
 import uuid
 import requests
 import gdown
-import genai
+
+import google.generativeai as genai
+from typing import Any
+import os
+from unstructured.partition.pdf import partition_pdf
+from PIL import Image
+import ssl
+
 
 from unstructured.partition.pdf import partition_pdf
 
@@ -75,6 +82,17 @@ class FileHandler:
 
         try:
             documents = loader.load()
+            if self.file_extension == "pdf":
+             raw_pdf_elements = partition_pdf(
+               filename=temp_file_path,
+               extract_images_in_pdf=True,
+               infer_table_structure=True,
+               chunking_strategy="by_title",
+               max_characters=4000,
+               new_after_n_chars=3800,
+               combine_text_under_n_chars=2000,
+               image_output_dir_path="app/features/quizzify/figures"
+)
         except Exception as e:
             logger.error(f"File content might be private or unavailable or the URL is incorrect.")
             raise FileHandlerError(f"No file content available", temp_file_path) from e
@@ -83,25 +101,14 @@ class FileHandler:
         os.remove(temp_file_path)
 
         return documents
-
+    
 def load_pdf_documents(pdf_url: str, verbose=False):
     pdf_loader = FileHandler(PyPDFLoader, "pdf")
     docs = pdf_loader.load(pdf_url)
-    image_dir ="app/features/quizzify/figures"
-#extracting images from the pdf and storing them in a directory
-    raw_pdf_elements = partition_pdf(
-      url=pdf_url,
-      extract_images_in_pdf=True,
-      infer_table_structure=True,
-      chunking_strategy="by_title",
-      max_characters=4000,
-      new_after_n_chars=3800,
-      combine_text_under_n_chars=2000,
-      image_output_dir_path="app/features/quizzify/figures"
-)
+    image_dir ="../app/features/quizzify/figures"
+    #extracting images from the pdf and storing them in a directory
     image_docs = genenerate_image_summaries(image_dir)
-#Converting the extracted images to text document summaries
-    
+
     if docs:
         split_docs = splitter.split_documents(docs)
 
@@ -109,7 +116,7 @@ def load_pdf_documents(pdf_url: str, verbose=False):
             logger.info(f"Found PDF file")
             logger.info(f"Splitting documents into {len(split_docs)} chunks")
 
-        return split_docs + image_docs
+        return image_docs + docs
 
 
 def load_csv_documents(csv_url: str, verbose=False):
@@ -383,10 +390,10 @@ def genenerate_image_summaries(img_dir):
 
    for filename in sorted(os.listdir(img_dir)):
      print(filename)
-     if filename.endswith(".png"):
+     if filename.endswith(".jpg"):
        image_path = os.path.join(img_dir,filename)
        img_paths.append(image_path)
-       img = Image(image_path)
+       img = Image.open(image_path)
        response = model.generate_content([prompt,img])
        image_summaries.append(response)
    img_summaries = []
@@ -406,7 +413,6 @@ def genenerate_image_summaries(img_dir):
      img_docs.append(img_doc)
   
    return img_docs
-
 
 file_loader_map = {
     FileType.PDF: load_pdf_documents,
