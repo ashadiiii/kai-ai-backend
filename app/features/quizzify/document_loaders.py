@@ -13,6 +13,9 @@ import tempfile
 import uuid
 import requests
 import gdown
+import genai
+
+from unstructured.partition.pdf import partition_pdf
 
 STRUCTURED_TABULAR_FILE_EXTENSIONS = {"csv", "xls", "xlsx", "gsheet", "xml"}
 
@@ -84,7 +87,21 @@ class FileHandler:
 def load_pdf_documents(pdf_url: str, verbose=False):
     pdf_loader = FileHandler(PyPDFLoader, "pdf")
     docs = pdf_loader.load(pdf_url)
-
+    image_dir ="app/features/quizzify/figures"
+#extracting images from the pdf and storing them in a directory
+    raw_pdf_elements = partition_pdf(
+      url=pdf_url,
+      extract_images_in_pdf=True,
+      infer_table_structure=True,
+      chunking_strategy="by_title",
+      max_characters=4000,
+      new_after_n_chars=3800,
+      combine_text_under_n_chars=2000,
+      image_output_dir_path="app/features/quizzify/figures"
+)
+    image_docs = genenerate_image_summaries(image_dir)
+#Converting the extracted images to text document summaries
+    
     if docs:
         split_docs = splitter.split_documents(docs)
 
@@ -92,7 +109,7 @@ def load_pdf_documents(pdf_url: str, verbose=False):
             logger.info(f"Found PDF file")
             logger.info(f"Splitting documents into {len(split_docs)} chunks")
 
-        return split_docs
+        return split_docs + image_docs
 
 
 def load_csv_documents(csv_url: str, verbose=False):
@@ -348,6 +365,48 @@ def generate_docs_from_img(img_url, verbose: bool=False):
         raise ImageHandlerError(f"Error processing the request", img_url) from e
 
     return split_docs
+
+from IPython.display import Image
+
+
+#Creating image summaries
+def genenerate_image_summaries(img_dir):
+   img_paths = []
+   image_summaries = []
+
+
+   model = genai.GenerativeModel(model_name="models/gemini-1.5-pro-latest")
+   prompt = """You are a curriculum instructor tasked with summarizing images for retrieval and in assisting in generating quiz questions.\
+       These summaries will be embedded and usd ot retrieve the raw image.\
+           Describe consisely the contents of the images and describe the characteristics of each component of the image. Do not infer what the image means unless it is for analysing mathematical graphs."""
+
+
+   for filename in sorted(os.listdir(img_dir)):
+     print(filename)
+     if filename.endswith(".png"):
+       image_path = os.path.join(img_dir,filename)
+       img_paths.append(image_path)
+       img = Image(image_path)
+       response = model.generate_content([prompt,img])
+       image_summaries.append(response)
+   img_summaries = []
+
+#extracts only the summary text from the llm response
+   for summary in image_summaries:
+     img_summary = summary.candidates[0].content.parts[0].text
+     img_summaries.append(img_summary)
+
+
+#creates document object with image summary and image path
+   img_docs = []
+   for i in range(len(img_summaries)):
+     summary = img_summaries[i]
+     metadata = img_paths[i]
+     img_doc = Document(page_content=summary,metadata={"image_url":metadata})
+     img_docs.append(img_doc)
+  
+   return img_docs
+
 
 file_loader_map = {
     FileType.PDF: load_pdf_documents,
