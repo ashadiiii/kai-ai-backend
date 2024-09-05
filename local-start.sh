@@ -6,7 +6,7 @@ export LANGCHAIN_TRACING_V2=true
 export LANGCHAIN_ENDPOINT="https://api.smith.langchain.com"
 export LANGCHAIN_API_KEY=$LANGSMITH_API_KEY
 export LANGCHAIN_PROJECT=$LANGSMITH_PROJECT
-export GOOGLE_API_KEY=AIzaSyC8nSuZBgtQcqP7m1Squ836YqKJP-RxpNc
+export GOOGLE_API_KEY=$GOOGLE_API_KEY
 
 export GOOGLE_APPLICATION_CREDENTIALS=$(pwd)/app/local-auth.json
 export ENV_TYPE=dev
