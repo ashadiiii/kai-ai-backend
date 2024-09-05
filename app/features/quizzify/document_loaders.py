@@ -153,7 +153,7 @@ def load_pdf_documents(pdf_url: str, verbose=False):
         if verbose:
             logger.info(f"Found PDF file")
             logger.info(f"Splitting documents into {len(split_docs)} chunks")
- # return image_docs + docs
+
         return image_docs + docs
 
 
