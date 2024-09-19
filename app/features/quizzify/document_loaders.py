@@ -362,30 +362,55 @@ def load_gpdf_documents(drive_folder_url: str, verbose=False):
 
         return docs
 
+
+from pytubefix import YouTube
+from pytubefix.cli import on_progress
+
+import ssl
+
+ssl._create_default_https_context = ssl._create_stdlib_context
+
 def load_docs_youtube_url(youtube_url: str, verbose=True) -> str:
-    try:
-        loader = YoutubeLoader.from_youtube_url(youtube_url, add_video_info=True)
-    except Exception as e:
-        logger.error(f"No such video found at {youtube_url}")
-        raise VideoTranscriptError(f"No video found", youtube_url) from e
-
-    try:
-        docs = loader.load()
-        length = docs[0].metadata["length"]
-        title = docs[0].metadata["title"]
-        
-    except Exception as e:
-        logger.error(f"Video transcript might be private or unavailable in 'en' or the URL is incorrect.")
-        raise VideoTranscriptError(f"No video transcripts available", youtube_url) from e
     
-    if verbose:
-        logger.info(f"Found video with title: {title} and length: {length}")
-        logger.info(f"Combined documents into a single string.")
-        logger.info(f"Beginning to process transcript...")
+    #load video as a temporary file
+    yt = YouTube(youtube_url,on_progress_callback=on_progress)
+    ys = yt.streams.get_highest_resolution()
+    ys.download(output_path="./app/features/quizzify/video_data/videos")
+    ys.download(output_path="./app/features/quizzify/video_data/audios",mp3=True)
 
-    split_docs = splitter.split_documents(docs)
+    extract_image_frames("./app/features/quizzify/video_data/videos")
+    
+    img_summaries = genenerate_image_summaries("./app/features/quizzify/video_data/video_img")
+    return img_summaries
 
-    return split_docs
+import cv2
+def extract_image_frames(vid_dir):
+    output_folder= "./app/features/quizzify/video_data/video_img"
+    if not os.path.exists(output_folder):
+        os.makedirs(output_folder)
+
+    for filename in sorted(os.listdir(vid_dir)):
+        file_path = os.path.join(vid_dir,filename)
+        cap = cv2.VideoCapture(file_path)
+        fps = cap.get(cv2.CAP_PROP_FPS)
+        frame_interval = int(fps*10)
+
+        count = 0
+        extracted_frames = 0
+
+        while cap.isOpened():
+            cap.set(cv2.CAP_PROP_POS_FRAMES,count)
+            ret,frame = cap.read()
+            if not ret:
+                break
+
+            frame_filename = os.path.join(output_folder,f"frame_{extracted_frames}.jpg")
+            cv2.imwrite(frame_filename,frame)
+            print(f"saved: {frame_filename}")
+            count+=frame_interval
+            extracted_frames+=1
+    
+
 
 llm_for_img = ChatGoogleGenerativeAI(model="gemini-1.5-flash")
 
