@@ -3,7 +3,6 @@ from app.services.logger import setup_logger
 from app.features.quizzify.tools import QuizBuilder
 from app.api.error_utilities import LoaderError, ToolExecutorError
 from app.services.schemas import QuizzifyArgs
-import google.generativeai as genai
 
 logger = setup_logger()
 

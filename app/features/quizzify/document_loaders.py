@@ -2,7 +2,7 @@ from langchain_community.document_loaders import YoutubeLoader, PyPDFLoader, Tex
 from langchain_community.document_loaders.csv_loader import CSVLoader
 from langchain_google_genai import ChatGoogleGenerativeAI
 from app.utils.allowed_file_extensions import FileType
-from app.api.error_utilities import FileHandlerError, ImageHandlerError
+from app.api.error_utilities import FileHandlerError, ImageHandlerError,ImageSummaryHandlerError
 from app.api.error_utilities import VideoTranscriptError
 from langchain_core.messages import HumanMessage
 from app.services.logger import setup_logger
@@ -13,14 +13,19 @@ import tempfile
 import uuid
 import requests
 import gdown
-
+import shutil
 import google.generativeai as genai
 from typing import Any
 import os
 from unstructured.partition.pdf import partition_pdf
 from PIL import Image
+import cv2
+from pytubefix import YouTube
+from pytubefix.cli import on_progress
+
 import ssl
 
+ssl._create_default_https_context = ssl._create_stdlib_context
 
 from unstructured.partition.pdf import partition_pdf
 
@@ -57,42 +62,30 @@ def get_docs(file_url: str, file_type: str, verbose=True):
         logger.error(f"Unsupported file type: {file_type}")
         raise FileHandlerError(f"Unsupported file type", file_url) from e
     
+#Helper method to create summaries of the images extracted from pdfs and videos
+def generate_image_summaries(img_dir):
+    img_docs = []
 
-def genenerate_image_summaries(img_dir):
-   img_paths = []
-   image_summaries = []
+    model = genai.GenerativeModel(model_name="models/gemini-1.5-flash")
+    prompt = read_text_file(os.path.join((os.path.dirname(os.path.abspath("./app"))), "app/features/quizzify/prompt/img_prompt.txt"))
 
+    for filename in sorted(os.listdir(img_dir)):
+      print(filename)
+      try:
+       if filename.endswith(".jpg"):
+        image_path = os.path.join(img_dir,filename)
+        img = Image.open(image_path)
+        response = model.generate_content([prompt,img])
+        image_summary = response.candidates[0].content.parts[0].text
 
-   model = genai.GenerativeModel(model_name="models/gemini-1.5-pro-latest")
-   prompt = """You are a curriculum instructor tasked with summarizing images for retrieval and in assisting in generating quiz questions.\
-       These summaries will be embedded and usd ot retrieve the raw image.\
-           Describe consisely the contents of the images and describe the characteristics of each component of the image. Do not infer what the image means unless it is for analysing mathematical graphs."""
+        img_doc = Document(page_content=image_summary,metadata={"image_url":image_path})
+        img_docs.append(img_doc)
 
-   for filename in sorted(os.listdir(img_dir)):
-     print(filename)
-     if filename.endswith(".jpg"):
-       image_path = os.path.join(img_dir,filename)
-       img_paths.append(image_path)
-       img = Image.open(image_path)
-       response = model.generate_content([prompt,img])
-       image_summaries.append(response)
-   img_summaries = []
-
-#extracts only the summary text from the llm response
-   for summary in image_summaries:
-     img_summary = summary.candidates[0].content.parts[0].text
-     img_summaries.append(img_summary)
-
-
-#creates document object with image summary and image path
-   img_docs = []
-   for i in range(len(img_summaries)):
-     summary = img_summaries[i]
-     metadata = img_paths[i]
-     img_doc = Document(page_content=summary,metadata={"image_url":metadata})
-     img_docs.append(img_doc)
-  
-   return img_docs
+      except Exception as e:
+        logger.error(f"No such file found at {image_path}")
+        raise ImageSummaryHandlerError(f"The file is not an image and cannot be summarised.", {image_path}) from e
+    logger.info("Image summaries generated!")
+    return img_docs
 
 class FileHandler:
     def __init__(self, file_loader, file_extension):
@@ -119,9 +112,13 @@ class FileHandler:
             raise FileHandlerError(f"No file found", temp_file_path) from e
 
         try:
+            dir_name = os.path.join((os.path.dirname(os.path.abspath("./app"))), "app/features/quizzify/images")
+            os.makedirs(dir_name)
+
+            dir = (os.path.dirname(os.path.abspath("./images")))
             documents = loader.load()
             if self.file_extension == "pdf":
-             raw_pdf_elements = partition_pdf(
+              partition_pdf(
                filename=temp_file_path,
                extract_images_in_pdf=True,
                infer_table_structure=True,
@@ -129,8 +126,8 @@ class FileHandler:
                max_characters=4000,
                new_after_n_chars=3800,
                combine_text_under_n_chars=2000,
-               extract_image_block_output_dir="/Users/mac/projects AI/kai-ai-backend/app/features/quizzify/images"
-)
+               extract_image_block_output_dir= os.path.join(dir, "app/features/quizzify/images"))
+              
         except Exception as e:
             logger.error(f"File content might be private or unavailable or the URL is incorrect.")
             raise FileHandlerError(f"No file content available", temp_file_path) from e
@@ -139,13 +136,17 @@ class FileHandler:
         os.remove(temp_file_path)
 
         return documents
-    
+
+
 def load_pdf_documents(pdf_url: str, verbose=False):
     pdf_loader = FileHandler(PyPDFLoader, "pdf")
     docs = pdf_loader.load(pdf_url)
-    image_dir ="/Users/mac/projects AI/kai-ai-backend/app/features/quizzify/images"
+
+    #directory that stores the images
+    image_dir =os.path.join((os.path.dirname(os.path.abspath("./app"))), "app/features/quizzify/images")
+
     #extracting images from the pdf and storing them in a directory
-    image_docs = genenerate_image_summaries(image_dir)
+    image_docs = generate_image_summaries(image_dir)
 
     if docs:
         split_docs = splitter.split_documents(docs)
@@ -154,7 +155,8 @@ def load_pdf_documents(pdf_url: str, verbose=False):
             logger.info(f"Found PDF file")
             logger.info(f"Splitting documents into {len(split_docs)} chunks")
 
-        return image_docs + docs
+    shutil.rmtree(image_dir)
+    return image_docs + docs
 
 
 def load_csv_documents(csv_url: str, verbose=False):
@@ -363,29 +365,29 @@ def load_gpdf_documents(drive_folder_url: str, verbose=False):
         return docs
 
 
-from pytubefix import YouTube
-from pytubefix.cli import on_progress
-
-import ssl
-
-ssl._create_default_https_context = ssl._create_stdlib_context
-
 def load_docs_youtube_url(youtube_url: str, verbose=True) -> str:
-    
-    #load video as a temporary file
+    #Extracting key image frames from the video and processing them to document objects
     yt = YouTube(youtube_url,on_progress_callback=on_progress)
     ys = yt.streams.get_highest_resolution()
-    ys.download(output_path="./app/features/quizzify/video_data/videos")
-    ys.download(output_path="./app/features/quizzify/video_data/audios",mp3=True)
+    ys.download(output_path = os.path.join((os.path.dirname(os.path.abspath("./app"))), "app/features/quizzify/video_data/videos"))
 
-    extract_image_frames("./app/features/quizzify/video_data/videos")
+    dir_name = os.path.join((os.path.dirname(os.path.abspath("./app"))), "app/features/quizzify/video_data/videos")
+    extract_image_frames(dir_name)
+
+    img_docs = generate_image_summaries(os.path.join((os.path.dirname(os.path.abspath("./app"))), "app/features/quizzify/video_data/video_img"))
+       
+    shutil.rmtree("./app/features/quizzify/video_data")
     
-    img_summaries = genenerate_image_summaries("./app/features/quizzify/video_data/video_img")
-    return img_summaries
+    #Extracting the audio files and processing them to document objects
+    loader = YoutubeLoader.from_youtube_url(youtube_url, add_video_info=True)
+    docs = loader.load()
+    audio_docs = splitter.split_documents(docs)
 
-import cv2
+    return img_docs + audio_docs
+
+
 def extract_image_frames(vid_dir):
-    output_folder= "./app/features/quizzify/video_data/video_img"
+    output_folder= os.path.join((os.path.dirname(os.path.abspath("./app"))), "app/features/quizzify/video_data/video_img")
     if not os.path.exists(output_folder):
         os.makedirs(output_folder)
 
@@ -414,7 +416,7 @@ def extract_image_frames(vid_dir):
 
 llm_for_img = ChatGoogleGenerativeAI(model="gemini-1.5-flash")
 
-def generate_docs_from_img(img_url, verbose: bool=False):
+def generate_docs_from_img(img_file_path,img_url, verbose: bool=False):
     message = HumanMessage(
     content=[
             {
